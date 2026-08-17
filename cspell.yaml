@@ -1,0 +1,21 @@
+$schema: https://raw.githubusercontent.com/streetsidesoftware/cspell/main/cspell.schema.json
+version: "0.2"
+dictionaryDefinitions:
+  - name: crossfade
+    path: "./docs/cspell/crossfade.txt"
+    addWords: true
+  - name: api
+    path: "./docs/cspell/api.txt"
+    addWords: true
+  - name: web
+    path: "./docs/cspell/web.txt"
+    addWords: true
+dictionaries:
+  - crossfade
+  - api
+  - web
+ignorePaths:
+  - "node_modules"
+  - "./docs/cspell/crossfade.txt"
+  - "./docs/cspell/api.txt"
+  - "./docs/cspell/web.txt"

@@ -1,0 +1,92 @@
+{
+  "trailingComma": "all",
+  "printWidth": 120,
+  "tabWidth": 2,
+  "useTabs": false,
+  "semi": true,
+  "bracketSpacing": true,
+  "arrowParens": "always",
+  "ignorePatterns": ["**/routeTree.gen.ts", "**/dist/**", "**/coverage/**"],
+  "overrides": [
+    {
+      "files": ["**/*.{ts,tsx,js,jsx}"],
+      "options": {
+        "singleQuote": true
+      }
+    },
+    {
+      "files": ["**/*.{md,mdx}"],
+      "options": {
+        "printWidth": 80,
+        "proseWrap": "always"
+      }
+    },
+    {
+      "files": ["apps/**"],
+      "options": {
+        "sortImports": {
+          "customGroups": [
+            {
+              "groupName": "css-url",
+              "elementNamePattern": ["@crossfade/ui"]
+            },
+            {
+              "groupName": "side_effect_style",
+              "selector": "side_effect_style"
+            },
+            {
+              "groupName": "crossfade",
+              "elementNamePattern": ["@crossfade/ui/**"]
+            },
+            {
+              "groupName": "app",
+              "elementNamePattern": ["#/**"]
+            }
+          ],
+          "newlinesBetween": true,
+          "groups": [
+            "builtin",
+            "external",
+            "crossfade",
+            "app",
+            "css-url",
+            ["style", "side_effect_style"],
+            ["parent", "sibling", "index"],
+            "unknown"
+          ]
+        }
+      }
+    }
+  ],
+  "sortImports": {
+    "customGroups": [
+      {
+        "groupName": "css-url",
+        "elementNamePattern": ["@crossfade/ui"]
+      },
+      {
+        "groupName": "side_effect_style",
+        "selector": "side_effect_style"
+      },
+      {
+        "groupName": "crossfade",
+        "elementNamePattern": ["@crossfade/ui/**"]
+      },
+      {
+        "groupName": "app",
+        "elementNamePattern": ["#/**"]
+      }
+    ],
+    "newlinesBetween": true,
+    "groups": [
+      "builtin",
+      "external",
+      "crossfade",
+      "app",
+      "css-url",
+      ["style", "side_effect_style"],
+      ["parent", "sibling", "index"],
+      "unknown"
+    ]
+  }
+}
