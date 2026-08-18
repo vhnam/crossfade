@@ -18,15 +18,15 @@ reference and the update instructions.
 
 ```
 # Update with architectural principles
-/spdd-prompt-update @docs/spdd/prompt/GGQPA-XXX-202603131758-[Feat]-api-token-usage-billing.md
+/spdd-prompt-update @docs/spdd/prompt/202608181415-[Feat]-001-api-tenant-onboarding-isolation.md
 Add three-layer architecture with dependency inversion principle
 
 # Update with new requirements
-/spdd-prompt-update @docs/spdd/prompt/GGQPA-XXX-202603131758-[Feat]-api-token-usage-billing.md
+/spdd-prompt-update @docs/spdd/prompt/202608181415-[Feat]-001-api-tenant-onboarding-isolation.md
 Add support for batch usage submission
 
 # Update specific section
-/spdd-prompt-update @docs/spdd/prompt/GGQPA-XXX-202603131758-[Feat]-api-token-usage-billing.md
+/spdd-prompt-update @docs/spdd/prompt/202608181415-[Feat]-001-api-tenant-onboarding-isolation.md
 Update Safeguards section to add rate limiting constraints
 ```
 

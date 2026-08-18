@@ -448,19 +448,19 @@ Input can be provided in two ways:
 5. **Save the fully-populated structured prompt to file**
 
    a. **Derive file name**:
-   `{JIRA}-{TIMESTAMP}-[{ACTION}]-{scope}-{description}.md`
-   - **JIRA**: Extract from business context if mentioned, otherwise use
-     `GGQPA-XXX`
+   `{TIMESTAMP}-[{ACTION}]-{SEQ}-{scope}-{description}.md`
    - **TIMESTAMP**: `YYYYMMDDHHmm` (current time)
    - **ACTION**: Infer from business context - `[Feat]`, `[Fix]`, `[Refactor]`,
      `[Test]`, `[Docs]`
+   - **SEQ**: Next 3-digit sequence from existing files in `docs/spdd/prompt/`
+     (start at `001` if the directory is empty)
    - **scope**: Infer from context - `api`, `service`, `repo`, `bq`, `db`,
      `util` (optional)
    - **description**: Derive from business context - kebab-case, < 10 words
 
    Examples:
-   - `GGQPA-XXX-202603061530-[Feat]-api-user-registration.md`
-   - `GGQPA-169-202603061530-[Fix]-service-payment-validation.md`
+   - `202608181415-[Feat]-001-api-tenant-onboarding-isolation.md`
+   - `202608181530-[Fix]-002-service-payment-validation.md`
 
    b. **Create directory and write file**:
    - Ensure directory `docs/spdd/prompt/` exists under the project root (create
@@ -504,7 +504,6 @@ confirmation.
 - Do NOT leave placeholders or TODO items - generate complete, specific content
 - Do NOT implement code before user confirms the structured prompt
 - File name MUST follow SPDD naming convention defined above
-- Use `GGQPA-XXX` if JIRA ticket number cannot be extracted from context
 - Always create `docs/spdd/prompt/` directory if it does not exist
 - Read codebase context when needed to generate accurate entity models and
   implementation tasks
