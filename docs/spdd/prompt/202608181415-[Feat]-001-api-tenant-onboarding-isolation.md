@@ -34,6 +34,12 @@ class TenantStatus {
     SUSPENDED
 }
 
+class TenantPublicStatus {
+    <<enumeration>>
+    active
+    suspended
+}
+
 class CreateTenantDto {
     +String name
     +String slug
@@ -44,7 +50,7 @@ class TenantIssuedResponseDto {
     +String id
     +String slug
     +String name
-    +TenantStatus status
+    +TenantPublicStatus status
     +String apiKey
     +String webhookUrl
     +String webhookSecret
@@ -55,7 +61,7 @@ class TenantSafeResponseDto {
     +String id
     +String slug
     +String name
-    +TenantStatus status
+    +TenantPublicStatus status
     +String webhookUrl
     +DateTime createdAt
     +DateTime updatedAt
@@ -81,8 +87,9 @@ class RequestOperatorContext {
 }
 
 Tenant "1" -- "1" TenantStatus : has
+TenantStatus --> TenantPublicStatus : toTenantPublicStatus
 CreateTenantDto --> Tenant : creates
-Tenant --> TenantIssuedResponseDto : maps to on create/rotate
+Tenant --> TenantIssuedResponseDto : maps to on create
 Tenant --> TenantSafeResponseDto : maps to on read/list
 Tenant --> RequestTenantContext : resolved by TenantAuthGuard
 OperatorUser --> RequestOperatorContext : resolved by OperatorAuthGuard via Better Auth session
@@ -104,7 +111,12 @@ A seeded row with `issuer` null is treated as "user not found" at
 
 1. Persistence & Domain Module:
    - Introduce the first ORM/persistence layer in `apps/api`: Prisma against
-     PostgreSQL, with a `Tenant` model as the sole table this feature owns.
+     PostgreSQL, with a `Tenant` model as the sole table this feature owns. The
+     Prisma client is generated to `apps/api/src/generated/prisma` and
+     re-exported from `apps/api/src/prisma/client.ts`; application code imports
+     `PrismaClient` / `TenantStatus` / `Prisma` from that barrel, not from
+     `@prisma/client`. `nest-cli.json` copies `generated/**/*` into the build
+     output.
    - Introduce the first domain module, `TenantsModule`, following Nest's
      Controller → Service → Repository(Prisma) layering — this becomes the
      reference pattern every later domain module (002+) copies.
@@ -135,8 +147,14 @@ A seeded row with `issuer` null is treated as "user not found" at
      without touching the `Tenant` schema or `TenantAuthGuard` at all. Nest
      disables the global JSON body parser for `/api/auth/*` so Better Auth's
      Node handler can read the raw body; CORS is origin-allowlisted
-     (`CORS_ORIGIN`, default `http://localhost:3000`) with `credentials: true`
-     so the session cookie can be set from `apps/web`.
+     (`env.CORS_ORIGIN` via T3 Env, default `http://localhost:3000`) with
+     `credentials: true` so the session cookie can be set from `apps/web`.
+     Required secrets (`DATABASE_URL`, `BETTER_AUTH_SECRET`) fail fast at
+     process start through `apps/api/src/env.ts` (`@t3-oss/env-core` + Valibot),
+     not via `BetterAuthService.onModuleInit`. `load-env.ts` loads
+     `apps/api/.env` before validation because Nest's cwd is often the monorepo
+     root. `apps/web` validates `VITE_API_URL` the same way
+     (`apps/web/src/env.ts`); `authClient` reads `env.VITE_API_URL`.
    - Isolation enforcement: application-layer scoping. Every tenant-facing query
      is written against a `PrismaService` wrapped by convention: all
      reads/writes take `tenantId` from `RequestTenantContext`, never from a
@@ -157,10 +175,13 @@ A seeded row with `issuer` null is treated as "user not found" at
      registration (hard reject if malformed/missing); reachability is not
      checked (registration must not depend on the tenant's own deploy timing).
    - Suspend/reactivate are idempotent state transitions (repeat calls are a
-     no-op `200`, not an error) — status is the single source of truth for
-     authorization at the `TenantAuthGuard` layer; suspended tenants are
-     rejected with `403` after successful credential resolution (distinguishable
-     from `401` for the client, per contract).
+     no-op `200`, not an error). Operator lifecycle POSTs (`suspend`,
+     `reactivate`, `rotate-key`) set `@HttpCode(HttpStatus.OK)` so Nest does not
+     default POST to `201`; create uses `@HttpCode(HttpStatus.CREATED)`. Status
+     is the single source of truth for authorization at the `TenantAuthGuard`
+     layer; suspended tenants are rejected with `403` after successful
+     credential resolution (distinguishable from `401` for the client, per
+     contract).
    - Credential rotation replaces `apiKeyHash` in place on the existing `Tenant`
      row; the raw key is returned once in the rotation response body and never
      persisted or logged in plaintext anywhere (constraint carried into
@@ -191,6 +212,8 @@ A seeded row with `issuer` null is treated as "user not found" at
 6. `AuthController` (new) forwards its catch-all route to Better Auth's own
    request handler — it implements no domain interface, it is a thin adapter
    between Nest's routing and Better Auth's framework-agnostic handler.
+7. `PrismaService` extends the generated `PrismaClient` and implements
+   `OnModuleInit` / `OnModuleDestroy` (`$connect` / `$disconnect`).
 
 ### Dependencies
 
@@ -206,7 +229,15 @@ A seeded row with `issuer` null is treated as "user not found" at
 5. `TenantCredentialService` (new, shared utility) is depended on by
    `OperatorTenantsService` (key generation/hashing on create/rotate) and
    `TenantAuthGuard` (hash comparison on resolution) — single place that owns
-   the hashing algorithm.
+   the hashing algorithm. 5b. `toTenantPublicStatus`
+   (`apps/api/src/tenants/tenant-status.ts`) is depended on by
+   `OperatorTenantsService` and `TenantsService` so JSON `status` is always
+   `active` / `suspended`, never Prisma enum members. Response DTOs type
+   `status` as `TenantPublicStatus`. 5c. `env` (`apps/api/src/env.ts`) is
+   depended on by `main.ts` (listen port), `BetterAuthService`
+   (`BETTER_AUTH_SECRET`, `BETTER_AUTH_URL`), and `parseCorsOrigins()`
+   (`CORS_ORIGIN`). `apps/web/src/integrates/auth.ts` depends on
+   `apps/web/src/env.ts` (`VITE_API_URL`).
 6. `GlobalExceptionFilter` is registered globally in `main.ts` via
    `app.useGlobalFilters(...)`; depended on by nothing, consumed implicitly by
    every controller.
@@ -214,11 +245,12 @@ A seeded row with `issuer` null is treated as "user not found" at
    wrapper around the configured Better Auth server instance) to resolve the
    incoming request's session cookie to an `operatorUserId`; it no longer
    depends on `process.env.OPERATOR_API_KEY` or any string-comparison logic.
-8. `BetterAuthService` depends on the same `PrismaService`/underlying Postgres
-   connection as every other module in this feature — Better Auth's Prisma
-   adapter reads/writes its own `User`/`Session`/`Account`/`Verification` tables
-   through it, so there remains exactly one database connection pool for the
-   whole app, not a second one.
+8. `BetterAuthService` depends on `PrismaService` (Prisma adapter) and `env`
+   (`BETTER_AUTH_URL`, `BETTER_AUTH_SECRET`) plus `parseCorsOrigins()` for
+   `trustedOrigins`. Better Auth's Prisma adapter reads/writes its own
+   `User`/`Session`/`Account`/`Verification` tables through the same client, so
+   there remains exactly one database connection pool for the whole app, not a
+   second one.
 9. `AuthController` depends on `BetterAuthService` to obtain the configured
    handler it forwards requests to; it has no dependency on
    `OperatorTenantsService` or `Tenant` at all — Better Auth's own routes
@@ -226,10 +258,15 @@ A seeded row with `issuer` null is treated as "user not found" at
 10. `PrismaModule` is `@Global()` and exports `PrismaService`; `AuthModule`
     exports `BetterAuthService` and is imported by `TenantsModule` so
     `OperatorAuthGuard` can inject it.
-11. `apps/web` `authClient` (`createAuthClient`) depends on `VITE_API_URL`
+11. `apps/web` `authClient` (`createAuthClient`) depends on `env.VITE_API_URL`
     (default `http://localhost:4000`) with base path `/api/auth`.
-12. Local operator bootstrap: `apps/api/prisma/seed.ts` depends on Prisma and
-    `better-auth/crypto` `hashPassword`; it does not instantiate Nest.
+12. Local operator bootstrap: `apps/api/prisma/seed.ts` depends on
+    `../src/generated/prisma` `PrismaClient` and `better-auth/crypto`
+    `hashPassword`; it does not instantiate Nest.
+13. Unit tests (`*.spec.ts` next to sources) and e2e
+    (`test/tenants/tenant-onboarding-isolation.e2e-spec.ts`) depend on
+    `test/setup-env.ts` for default env + Better Auth mocks; e2e overrides
+    `BetterAuthService` and mocks `../../src/env`.
 
 ### Layered Architecture
 
@@ -247,14 +284,15 @@ A seeded row with `issuer` null is treated as "user not found" at
    check), `OperatorAuthGuard` (Better Auth session → `operatorUserId`
    resolution) — run before controller handlers, attach
    `RequestTenantContext`/`RequestOperatorContext` respectively.
-4. Repository/Data Access Layer: `PrismaService` (Prisma client wrapper,
-   `Tenant` model access) — single source of DB access for this module; Better
-   Auth's own Prisma adapter reads/writes its
-   `User`/`Session`/`Account`/`Verification` tables through the same underlying
-   connection.
+4. Repository/Data Access Layer: `PrismaService` extends the generated
+   `PrismaClient` from `apps/api/src/prisma/client.ts` (`Tenant` model access) —
+   single source of DB access for this module; Better Auth's own Prisma adapter
+   reads/writes its `User`/`Session`/`Account`/`Verification` tables through the
+   same client instance.
 5. Exception Handling Layer: `GlobalExceptionFilter` — unified translation of
    `BusinessException` subclasses and Prisma errors (e.g. `P2002`) into the
-   `ErrorResponse` DTO shape and correct HTTP status.
+   `ErrorResponse` DTO shape and correct HTTP status. Prisma error types are
+   imported from `prisma/client` (`Prisma.PrismaClientKnownRequestError`).
 6. Auth Integration Layer: `BetterAuthService` (configured Better Auth server
    instance, session verification, password-reset URL logging) +
    `AuthController` (mounts Better Auth's own routes under Nest's routing) —
@@ -262,8 +300,9 @@ A seeded row with `issuer` null is treated as "user not found" at
    layer's only consumer for session checks. Operator UI in `apps/web` is
    `/auth/login` plus forgot/reset-password routes that call the same
    `authClient`.
-7. Bootstrap Layer: `apps/api/prisma/seed.ts` (local operator user + credential
-   `Account`) run via `prisma db seed` / `tsx prisma/seed.ts`.
+7. Bootstrap / Config Layer: `load-env.ts` then `env.ts` (T3 Env + Valibot)
+   before Nest listen; `apps/api/prisma/seed.ts` (local operator user +
+   credential `Account`) run via `prisma db seed` / `tsx prisma/seed.ts`.
 
 ## Operations
 
@@ -285,9 +324,13 @@ A seeded row with `issuer` null is treated as "user not found" at
 3. Constraints: `slug` unique index (DB-level, closes
    concurrent-duplicate-registration race). `apiKeyHash` unique index (guard
    lookup). No cascade/delete path defined in v1 (no deletion feature).
-4. Migration: add `apps/api/prisma/schema.prisma`, run initial Prisma migration;
-   add `PrismaService`/`PrismaModule` (global, injectable) as shared infra
-   alongside this feature.
+4. Migration: add `apps/api/prisma/schema.prisma` with
+   `generator client { provider = "prisma-client-js"; output = "../src/generated/prisma" }`;
+   run initial Prisma migration; add `apps/api/src/prisma/client.ts` (re-export
+   `Prisma`, `PrismaClient`, `TenantStatus`, `Tenant`) and
+   `PrismaService`/`PrismaModule` (global, injectable).
+   `PrismaService extends PrismaClient`. Seed (`prisma/seed.ts`) constructs
+   `PrismaClient` from `../src/generated/prisma` because it runs outside Nest.
 5. Better Auth models (new — additive to the same `schema.prisma`): generate
    Better Auth's standard `User`, `Session`, `Account`, `Verification` models
    via its own schema-generation step (`@better-auth/cli generate`, targeting
@@ -298,17 +341,35 @@ A seeded row with `issuer` null is treated as "user not found" at
    key from `Tenant` to `User` in v1 (operators are not scoped per tenant —
    there is exactly one operator identity space).
 
+### Configure Environment - `env.ts` / `load-env.ts`
+
+1. Responsibility: Fail-fast typed environment for `apps/api` so missing
+   `DATABASE_URL` / `BETTER_AUTH_SECRET` never reach request handling.
+2. Logic: `load-env.ts` resolves `apps/api/.env` relative to compiled
+   `__dirname` and calls `process.loadEnvFile` when the file exists. `env.ts`
+   imports `./load-env` then `createEnv` (`@t3-oss/env-core`) with Valibot:
+   required `DATABASE_URL` (URL) and `BETTER_AUTH_SECRET` (non-empty); optional
+   `PORT` (digits → number 1–65535), `BETTER_AUTH_URL` (default
+   `http://localhost:4000`), `CORS_ORIGIN` (default `http://localhost:3000`).
+   `emptyStringAsUndefined: true`. `skipValidation` when
+   `SKIP_ENV_VALIDATION === 'true'` (escape hatch; tests currently seed env in
+   `test/setup-env.ts` instead).
+3. Web: `apps/web/src/env.ts` validates optional `VITE_API_URL` (default
+   `http://localhost:4000`); `authClient` uses `env.VITE_API_URL`.
+
 ### Configure Auth - `BetterAuthService`
 
 1. Responsibility: Own the single configured Better Auth server instance for the
    app — the one place `betterAuth(...)` is constructed, so no other file
    re-configures or re-instantiates it.
-2. Attributes: holds the Better Auth instance, configured with the Prisma
-   adapter (pointed at `PrismaService`'s client, PostgreSQL provider), `baseURL`
-   from `BETTER_AUTH_URL` (default `http://localhost:4000`), `trustedOrigins`
-   from `parseCorsOrigins()` / `CORS_ORIGIN`, and email/password sign-in
-   enabled. `sendResetPassword` currently logs `{user.email, url}` at Nest
-   logger info (no mail provider in v1). No social/OAuth providers.
+2. Attributes: holds the Better Auth instance constructed in the constructor via
+   private `createAuth()`. Configured with the Prisma adapter (pointed at the
+   injected `PrismaService` client, PostgreSQL provider), `baseURL` from
+   `env.BETTER_AUTH_URL`, `trustedOrigins` from `parseCorsOrigins()`, `secret`
+   from `env.BETTER_AUTH_SECRET`, and email/password sign-in enabled.
+   `sendResetPassword` currently logs `{user.email, url}` at Nest logger info
+   (no mail provider in v1). No social/OAuth providers. No `OnModuleInit` secret
+   check — T3 Env already rejected a missing secret at import.
 3. Methods:
    - `getSession(headers: Headers): Promise<{ operatorUserId: string } | null>`
      - Logic: delegate to Better Auth's own session-verification API, passing
@@ -317,9 +378,8 @@ A seeded row with `issuer` null is treated as "user not found" at
        no/invalid session, return `null` — no exception thrown here, the caller
        (`OperatorAuthGuard`) decides how to react.
 4. Constraints: `BETTER_AUTH_SECRET` is a required environment variable (Better
-   Auth uses it to sign session tokens) — `BetterAuthService.onModuleInit`
-   throws if it is unset, same discipline as any other required secret in this
-   codebase.
+   Auth uses it to sign session tokens) — validated by `env.ts` at process
+   start, same discipline as `DATABASE_URL`.
 
 ### Create Controller - `AuthController`
 
@@ -359,12 +419,23 @@ A seeded row with `issuer` null is treated as "user not found" at
      - Logic: SHA-256 hex digest of the input, used by `TenantAuthGuard` to look
        up by hash.
    - `generateWebhookSecret(): string`
-     - Logic: Generate 32 bytes of secure randomness, return as a hex/base64url
+     - Logic: Generate 32 bytes of secure randomness, return as a base64url
        string; stored as `webhookSecret` on create only (no rotation path in
        v1).
 3. Constraints: Never log the raw key or secret at any log level, in this
    service or any caller — enforced by code review, called out explicitly in
    Safeguards.
+
+### Create Mapper - `toTenantPublicStatus`
+
+1. Responsibility: Single mapping from Prisma `TenantStatus` (`ACTIVE` /
+   `SUSPENDED`) to contract JSON literals (`active` / `suspended`).
+2. Package: `apps/api/src/tenants/tenant-status.ts`.
+3. Methods:
+   - `toTenantPublicStatus(status: TenantStatus): TenantPublicStatus`
+     - Logic: switch on enum members; TypeScript exhaustiveness (no default).
+4. Usage: `OperatorTenantsService.toSafeResponse` / `createTenant` return
+   mapping, and `TenantsService.getSelf`.
 
 ### Implement Service - `OperatorTenantsService`
 
@@ -378,39 +449,47 @@ A seeded row with `issuer` null is treated as "user not found" at
        `@IsUrl({ protocols: ['https'], require_protocol: true })`).
      - Business Logic: generate `apiKey`/`webhookSecret` via
        `TenantCredentialService`; attempt `prisma.tenant.create(...)` with
-       `status: ACTIVE`; on Prisma unique-constraint violation (`P2002` on
-       `slug`), throw `DuplicateTenantSlugException`.
+       `status: TenantStatus.ACTIVE`; on Prisma unique-constraint violation
+       (`P2002` whose `meta.target` includes `slug`), throw
+       `DuplicateTenantSlugException`. Other `P2002`s (e.g. `apiKeyHash`) are
+       not translated here.
      - Exception Handling: malformed/missing `webhookUrl` → `ValidationPipe`
        throws `400` before reaching the service (FR-002); duplicate slug →
        `DuplicateTenantSlugException` → `409` via `GlobalExceptionFilter`
        (FR-003).
      - Return Value: `TenantIssuedResponseDto` including the raw `apiKey` and
-       `webhookSecret` (only time either is ever returned in plaintext).
-       `status` is the Prisma enum (`ACTIVE` / `SUSPENDED`), not the lowercase
-       contract literals. Nest `@Post()` returns HTTP `201`.
+       `webhookSecret` (only time either is ever returned in plaintext). JSON
+       `status` MUST be the contract literals `active` / `suspended`, mapped
+       from Prisma `TenantStatus` (`ACTIVE` / `SUSPENDED`) at the DTO boundary —
+       never serialize the Prisma enum members. Controller `@HttpCode(CREATED)`
+       returns HTTP `201`.
    - `suspendTenant(tenantId: string): Promise<TenantSafeResponseDto>`
-     - Business Logic:
-       `prisma.tenant.update({ where: { id: tenantId }, data: { status: SUSPENDED } })`;
-       idempotent — if already `SUSPENDED`, still returns `200` with unchanged
-       record (no error).
-     - Exception Handling: unknown `tenantId` → `404 Not Found`.
-     - Return Value: `TenantSafeResponseDto` (no secrets).
+     - Business Logic: `setStatus(tenantId, TenantStatus.SUSPENDED)` —
+       `getTenantOrThrow` then `prisma.tenant.update`; idempotent — if already
+       `SUSPENDED`, still returns `200` with unchanged record (no error).
+     - Exception Handling: unknown `tenantId` → `TenantNotFoundException` →
+       `404 Not Found` (lookup before update, not a raw Prisma P2025).
+     - Return Value: `TenantSafeResponseDto` (no secrets); JSON `status` is
+       `active` / `suspended`.
    - `reactivateTenant(tenantId: string): Promise<TenantSafeResponseDto>`
-     - Business Logic: mirrors `suspendTenant`, sets `status: ACTIVE`,
+     - Business Logic: mirrors `suspendTenant` via `setStatus(..., ACTIVE)`,
        idempotent.
      - Return Value: `TenantSafeResponseDto`.
    - `rotateKey(tenantId: string): Promise<RotateKeyResponseDto>`
-     - Business Logic: generate new `apiKey` via `TenantCredentialService`;
-       update `apiKeyHash` in place on the existing row; old key immediately
-       stops resolving (no multi-key window in v1, per FR-012/Assumptions).
+     - Business Logic: `getTenantOrThrow`; generate new `apiKey` via
+       `TenantCredentialService`; update `apiKeyHash` in place on the existing
+       row; old key immediately stops resolving (no multi-key window in v1, per
+       FR-012/Assumptions).
      - Return Value: `RotateKeyResponseDto` with the new raw `apiKey` (shown
        once).
    - `getTenant(tenantId: string): Promise<TenantSafeResponseDto>`
-     - Business Logic: fetch by `id`; used by operator to confirm historical
-       data survived suspension (FR-010).
+     - Business Logic: `getTenantOrThrow` then `toSafeResponse`; used by
+       operator to confirm historical data survived suspension (FR-010).
      - Exception Handling: unknown `tenantId` → `404 Not Found`.
-3. Dependency Injection: `PrismaService`, `TenantCredentialService`.
-4. Transaction Management: `createTenant` is a single-statement Prisma call
+3. Helpers: private `getTenantOrThrow`, `setStatus`, `toSafeResponse`; module
+   function `isSlugUniqueViolation`.
+4. Dependency Injection: `PrismaService`, `TenantCredentialService`.
+5. Transaction Management: `createTenant` is a single-statement Prisma call
    relying on the DB unique constraint for atomicity — no explicit transaction
    block needed since there is exactly one write.
 
@@ -427,7 +506,7 @@ A seeded row with `issuer` null is treated as "user not found" at
        test). Missing row after a resolved `tenantId` →
        `TenantNotFoundException` (defensive; the guard already required an
        active tenant).
-     - Return Value: `TenantSafeResponseDto`.
+     - Return Value: `TenantSafeResponseDto` via `toTenantPublicStatus`.
 3. Dependency Injection: `PrismaService`.
 
 ### Create Guard - `TenantAuthGuard`
@@ -477,8 +556,8 @@ A seeded row with `issuer` null is treated as "user not found" at
 4. Constraints: never accepts an `X-Operator-Key` header or any static shared
    secret as a fallback — the only valid input is a Better Auth session cookie.
    `OPERATOR_API_KEY` is retired entirely by this update; `BETTER_AUTH_SECRET`
-   (see `BetterAuthService`) replaces it as the required environment variable
-   the app fails fast on if unset.
+   (see `env.ts` / `BetterAuthService`) replaces it as the required environment
+   variable the app fails fast on if unset.
 
 ### Add Operator Login Page - `apps/web`
 
@@ -488,7 +567,7 @@ A seeded row with `issuer` null is treated as "user not found" at
 2. Scope: email/password sign-in at TanStack route `/auth/login`
    (`apps/web/src/modules/auth/login`), using Better Auth's client SDK
    (`createAuthClient` in `apps/web/src/integrates/auth.ts`, pointed at
-   `{VITE_API_URL}/api/auth`) via `authClient.signIn.email`; on success,
+   `${env.VITE_API_URL}/api/auth`) via `authClient.signIn.email`; on success,
    navigate to `/`. Forgot-password (`/auth/forgot-password`) and reset-password
    (`/auth/reset-password`) pages call `authClient.requestPasswordReset` /
    `authClient.resetPassword` against the same API; reset email delivery is the
@@ -527,7 +606,10 @@ A seeded row with `issuer` null is treated as "user not found" at
    - `GET /operator/tenants/:id` → `200` `TenantSafeResponseDto` | `404`.
 3. Annotations: `@Controller('operator/tenants')`,
    `@UseGuards(OperatorAuthGuard)` at class level, `@Body()`/`@Param('id')` per
-   route, `ValidationPipe` applied globally or per-route for `CreateTenantDto`.
+   route, `ValidationPipe` applied globally for `CreateTenantDto`.
+   `@HttpCode(HttpStatus.CREATED)` on create; `@HttpCode(HttpStatus.OK)` on
+   `suspend` / `reactivate` / `rotate-key` (GET getTenant uses Nest default
+   200).
 4. Constraints: never returns `apiKeyHash` or `webhookSecret` on any route
    except the plaintext-once fields on create/rotate responses.
 
@@ -590,6 +672,23 @@ A seeded row with `issuer` null is treated as "user not found" at
    and services (`OperatorTenantsService`, `TenantsService`) at the exact points
    described in their Operations entries above.
 
+### Add Tests - unit and e2e
+
+1. Responsibility: Lock credential isolation, lifecycle HTTP status, JSON
+   `status` literals, and env/auth wiring against regressions.
+2. Unit (Jest `rootDir: src`, `setupFiles: test/setup-env.ts`):
+   - `tenant-status.spec.ts`, `tenant-credential.service.spec.ts`,
+     `operator-tenants.service.spec.ts`, `tenants.controller.spec.ts`,
+     `tenant-auth.guard.spec.ts`, `operator-auth.guard.spec.ts`,
+     `global-exception.filter.spec.ts`.
+3. E2e (`test/jest-e2e.json`,
+   `test/tenants/tenant-onboarding-isolation.e2e-spec.ts`): Nest testing module
+   with `AppModule`; mock `src/env`; override `BetterAuthService.getSession` to
+   accept cookie `e2e-operator-session=1`; same body-parser skip for `/api/auth`
+   as `main.ts`; cleanup created tenants after the suite.
+4. Constraints: never log or assert plaintext production secrets; test env
+   defaults live in `setup-env.ts`.
+
 ## Norms
 
 1. Annotation Standards: controllers use `@Controller(path)` + class-level
@@ -631,7 +730,17 @@ A seeded row with `issuer` null is treated as "user not found" at
    is constructed — no controller, guard, or service outside it may import
    Better Auth's server-side configuration APIs directly; `OperatorAuthGuard`
    only ever calls `BetterAuthService.getSession(...)`. CORS origins for the
-   session cookie are owned by `parseCorsOrigins()` in `apps/api`.
+   session cookie are owned by `parseCorsOrigins()` reading `env.CORS_ORIGIN`.
+   Process env is not read ad hoc in services/guards for those keys.
+8. Environment Validation: `apps/api/src/env.ts` is the single validated env
+   object for the API; `apps/web/src/env.ts` is the single validated env object
+   for the web client. Do not scatter `process.env.BETTER_AUTH_*` /
+   `process.env.VITE_API_URL` reads outside those modules (tests may mock
+   `src/env` or set defaults in `setup-env.ts`).
+9. Prisma Imports: application TypeScript under `apps/api/src` imports Prisma
+   types and the client from `prisma/client.ts`, never from `@prisma/client` or
+   `generated/prisma` directly (seed is the exception: it imports generated
+   `PrismaClient` because it is not a Nest provider).
 
 ## Safeguards
 
@@ -676,8 +785,9 @@ A seeded row with `issuer` null is treated as "user not found" at
    client instance in the app (shared, injectable, not re-instantiated per
    module); Better Auth's Prisma adapter MUST be configured against that same
    connection, never a second pool. `BETTER_AUTH_SECRET` MUST be a required
-   environment variable with a fail-fast boot check, replacing the retired
-   `OPERATOR_API_KEY` variable entirely.
+   environment variable with a fail-fast boot check in `apps/api/src/env.ts` (T3
+   Env + Valibot), replacing the retired `OPERATOR_API_KEY` variable entirely.
+   `DATABASE_URL` MUST likewise fail fast if missing or not a URL.
 8. Data Constraints: `slug` MUST be validated as URL-safe (lowercase
    alphanumeric + hyphen) and immutable after creation; `webhookUrl` MUST be
    validated as a well-formed HTTPS URL at registration (hard reject on
@@ -685,7 +795,7 @@ A seeded row with `issuer` null is treated as "user not found" at
 9. API Constraints: response shapes MUST exactly match
    `contracts/operator-api.md` and `contracts/tenant-authentication.md` (status
    codes, field names, once-only secret fields) — these two contract files are
-   binding, not illustrative, for this implementation. Current JSON `status`
-   values are Prisma enum members `ACTIVE` / `SUSPENDED`; aligning them to the
-   contract's lowercase `active` / `suspended` remains an open contract-vs-code
-   gap (do not treat the Prisma serialization as the contract).
+   binding, not illustrative, for this implementation. JSON `status` MUST be
+   `active` or `suspended`. Persistence MAY keep Prisma `TenantStatus` (`ACTIVE`
+   / `SUSPENDED`); mapping happens in the service-to-DTO layer, not by changing
+   the database enum.
