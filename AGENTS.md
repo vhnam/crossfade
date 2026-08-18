@@ -808,7 +808,7 @@ release. Add a tool name to select part of the graph. For example, run
 
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **crossfade** (872 symbols, 1092
+This project is indexed by GitNexus as **crossfade** (877 symbols, 1097
 relationships, 14 execution flows). Use the GitNexus MCP tools to understand
 code, assess impact, and navigate safely.
 
