@@ -1,6 +1,3 @@
-import { existsSync } from 'node:fs';
-import { resolve } from 'node:path';
-
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { json } from 'express';
@@ -8,14 +5,9 @@ import { json } from 'express';
 import { AppModule } from './app.module';
 import { parseCorsOrigins } from './common/cors-origins';
 import { GlobalExceptionFilter } from './common/filters/global-exception.filter';
+import { env } from './env';
 
 async function bootstrap() {
-  // Prisma reads process.env, not apps/api/.env, when cwd is the monorepo root.
-  const envPath = resolve(__dirname, '..', '.env');
-  if (existsSync(envPath)) {
-    process.loadEnvFile(envPath);
-  }
-
   // bodyParser disabled globally: Better Auth's Node handler reads the raw
   // request body itself, so /api/auth/* must never pass through express.json() first.
   const app = await NestFactory.create(AppModule, { bodyParser: false });
@@ -38,6 +30,6 @@ async function bootstrap() {
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }));
   app.useGlobalFilters(new GlobalExceptionFilter());
 
-  await app.listen(process.env.PORT ?? 4000);
+  await app.listen(env.PORT ?? 4000);
 }
 void bootstrap();

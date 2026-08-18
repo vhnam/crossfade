@@ -14,6 +14,7 @@
   "dependencies": {
     "@crossfade/ui": "workspace:*",
     "@formisch/react": "catalog:",
+    "@t3-oss/env-core": "catalog:",
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
     "better-auth": "^1.2.2",

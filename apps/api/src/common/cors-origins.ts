@@ -1,5 +1,7 @@
+import { env } from '../env';
+
 export function parseCorsOrigins(): string[] {
-  const configured = process.env.CORS_ORIGIN ?? 'http://localhost:3000';
+  const configured = env.CORS_ORIGIN ?? 'http://localhost:3000';
   const origins = configured
     .split(',')
     .map((origin) => origin.trim())
