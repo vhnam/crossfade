@@ -808,8 +808,8 @@ release. Add a tool name to select part of the graph. For example, run
 
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **crossfade** (1129 symbols, 1708
-relationships, 31 execution flows). Use the GitNexus MCP tools to understand
+This project is indexed by GitNexus as **crossfade** (1202 symbols, 1899
+relationships, 34 execution flows). Use the GitNexus MCP tools to understand
 code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it
