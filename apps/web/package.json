@@ -13,10 +13,14 @@
   },
   "dependencies": {
     "@crossfade/ui": "workspace:*",
+    "@formisch/react": "catalog:",
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
+    "better-auth": "^1.2.2",
+    "lucide-react": "catalog:",
     "react": "catalog:",
-    "react-dom": "catalog:"
+    "react-dom": "catalog:",
+    "valibot": "catalog:"
   },
   "devDependencies": {
     "@babel/core": "catalog:",
