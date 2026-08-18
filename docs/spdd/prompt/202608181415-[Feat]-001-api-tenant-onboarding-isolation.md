@@ -93,6 +93,13 @@ OperatorUser --> RequestOperatorContext : resolved by OperatorAuthGuard via Bett
 adapter, not hand-modeled by this feature — see Operations for the exact model
 set Better Auth generates into `schema.prisma`.
 
+Credential accounts used for operator email/password sign-in MUST set
+`Account.issuer` to Better Auth 1.7's local credential issuer
+(`local:credential`, i.e. `createLocalAccountIssuer("credential")`),
+`Account.providerId` to `credential`, and `Account.accountId` to the user's id.
+A seeded row with `issuer` null is treated as "user not found" at
+`/api/auth/sign-in/email` even when the email exists.
+
 ## Approach
 
 1. Persistence & Domain Module:
@@ -120,12 +127,16 @@ set Better Auth generates into `schema.prisma`.
      `User`/`Session`/`Account`/`Verification` tables (via its Prisma adapter,
      against the same Postgres database `PrismaService` already connects to) and
      issues an `httpOnly` session cookie on successful email/password sign-in.
-     `OperatorAuthGuard` no longer compares a shared secret — it resolves the
-     incoming request's session cookie via Better Auth's own
-     session-verification API and attaches `{ operatorUserId }` as
+     `OperatorAuthGuard` no longer compares a shared secret — it copies the
+     Express request headers into a Fetch `Headers` object, calls
+     `BetterAuthService.getSession`, and attaches `{ operatorUserId }` as
      `RequestOperatorContext`. This replaces the v1-era single-shared-secret
      mechanism now that a real login surface exists to authenticate against,
-     without touching the `Tenant` schema or `TenantAuthGuard` at all.
+     without touching the `Tenant` schema or `TenantAuthGuard` at all. Nest
+     disables the global JSON body parser for `/api/auth/*` so Better Auth's
+     Node handler can read the raw body; CORS is origin-allowlisted
+     (`CORS_ORIGIN`, default `http://localhost:3000`) with `credentials: true`
+     so the session cookie can be set from `apps/web`.
    - Isolation enforcement: application-layer scoping. Every tenant-facing query
      is written against a `PrismaService` wrapped by convention: all
      reads/writes take `tenantId` from `RequestTenantContext`, never from a
@@ -168,9 +179,13 @@ set Better Auth generates into `schema.prisma`.
 2. `OperatorAuthGuard` implements Nest's `CanActivate` interface.
 3. `GlobalExceptionFilter` implements Nest's `ExceptionFilter` interface,
    decorated `@Catch()`.
-4. `DuplicateTenantSlugException`, `InvalidWebhookUrlException`,
+4. `DuplicateTenantSlugException`, `TenantNotFoundException`,
    `TenantSuspendedException`, `InvalidCredentialException` all extend a shared
-   `BusinessException extends HttpException` base class.
+   `BusinessException extends HttpException` base class. Malformed/missing
+   `webhookUrl` is rejected by Nest `ValidationPipe` (`400`) via
+   `CreateTenantDto`
+   (`@IsUrl({ protocols: ['https'], require_protocol: true })`), not a dedicated
+   `InvalidWebhookUrlException`.
 5. `CreateTenantDto` uses `class-validator` decorators (no custom base class
    needed — existing Nest `ValidationPipe` convention).
 6. `AuthController` (new) forwards its catch-all route to Better Auth's own
@@ -185,9 +200,9 @@ set Better Auth generates into `schema.prisma`.
    `TenantsService`; guarded by `TenantAuthGuard`.
 3. `OperatorTenantsService` and `TenantsService` both depend on `PrismaService`
    (new, shared) for persistence — no direct Prisma client usage in controllers.
-4. `TenantAuthGuard` depends on `PrismaService` directly (guards run before
-   DI-scoped services are convenient to inject business logic into; guard stays
-   thin — hash lookup only, no business rules).
+4. `TenantAuthGuard` depends on `PrismaService` and `TenantCredentialService`
+   (hash the bearer token, then `findUnique` on `apiKeyHash`). Guard stays thin
+   — hash lookup and status check only, no other business rules.
 5. `TenantCredentialService` (new, shared utility) is depended on by
    `OperatorTenantsService` (key generation/hashing on create/rotate) and
    `TenantAuthGuard` (hash comparison on resolution) — single place that owns
@@ -208,13 +223,22 @@ set Better Auth generates into `schema.prisma`.
    handler it forwards requests to; it has no dependency on
    `OperatorTenantsService` or `Tenant` at all — Better Auth's own routes
    (`/api/auth/*`) know nothing about tenants.
+10. `PrismaModule` is `@Global()` and exports `PrismaService`; `AuthModule`
+    exports `BetterAuthService` and is imported by `TenantsModule` so
+    `OperatorAuthGuard` can inject it.
+11. `apps/web` `authClient` (`createAuthClient`) depends on `VITE_API_URL`
+    (default `http://localhost:4000`) with base path `/api/auth`.
+12. Local operator bootstrap: `apps/api/prisma/seed.ts` depends on Prisma and
+    `better-auth/crypto` `hashPassword`; it does not instantiate Nest.
 
 ### Layered Architecture
 
 1. Controller Layer: `OperatorTenantsController` (privileged CRUD/lifecycle),
-   `TenantsController` (tenant self-read, `GET /tenants/me`) — parse/validate
-   input via DTOs + `ValidationPipe`, delegate to services, never touch Prisma
-   directly.
+   `TenantsController` (tenant self-read, `GET /tenants/me`), `AuthController`
+   (`/api/auth/*` catch-all) — tenant/operator controllers parse/validate input
+   via DTOs + `ValidationPipe` and delegate to services, never touch Prisma
+   directly. `AuthController` forwards the raw Node request/response to Better
+   Auth (`toNodeHandler`).
 2. Service Layer: `OperatorTenantsService`
    (create/suspend/reactivate/rotate/get), `TenantsService` (self-lookup by
    resolved `tenantId`) — own all business rules (uniqueness, status
@@ -231,11 +255,15 @@ set Better Auth generates into `schema.prisma`.
 5. Exception Handling Layer: `GlobalExceptionFilter` — unified translation of
    `BusinessException` subclasses and Prisma errors (e.g. `P2002`) into the
    `ErrorResponse` DTO shape and correct HTTP status.
-6. Auth Integration Layer (new): `BetterAuthService` (configured Better Auth
-   server instance, session verification) + `AuthController` (mounts Better
-   Auth's own routes under Nest's routing) — sits alongside, not inside, the
-   Guard Layer; `OperatorAuthGuard` is the layer's only consumer within this
-   feature.
+6. Auth Integration Layer: `BetterAuthService` (configured Better Auth server
+   instance, session verification, password-reset URL logging) +
+   `AuthController` (mounts Better Auth's own routes under Nest's routing) —
+   sits alongside, not inside, the Guard Layer; `OperatorAuthGuard` is the
+   layer's only consumer for session checks. Operator UI in `apps/web` is
+   `/auth/login` plus forgot/reset-password routes that call the same
+   `authClient`.
+7. Bootstrap Layer: `apps/api/prisma/seed.ts` (local operator user + credential
+   `Account`) run via `prisma db seed` / `tsx prisma/seed.ts`.
 
 ## Operations
 
@@ -247,15 +275,16 @@ set Better Auth generates into `schema.prisma`.
    - `id`: `String @id @default(uuid())` — internal identifier, never guessable.
    - `slug`: `String @unique` — immutable after creation.
    - `name`: `String`.
-   - `apiKeyHash`: `String` — SHA-256 hex digest of the active raw key.
+   - `apiKeyHash`: `String @unique` — SHA-256 hex digest of the active raw key
+     (unique index is the `TenantAuthGuard` lookup path).
    - `webhookUrl`: `String`.
    - `webhookSecret`: `String`.
    - `status`: `TenantStatus @default(ACTIVE)`.
    - `createdAt`: `DateTime @default(now())`.
    - `updatedAt`: `DateTime @updatedAt`.
 3. Constraints: `slug` unique index (DB-level, closes
-   concurrent-duplicate-registration race). No cascade/delete path defined in v1
-   (no deletion feature).
+   concurrent-duplicate-registration race). `apiKeyHash` unique index (guard
+   lookup). No cascade/delete path defined in v1 (no deletion feature).
 4. Migration: add `apps/api/prisma/schema.prisma`, run initial Prisma migration;
    add `PrismaService`/`PrismaModule` (global, injectable) as shared infra
    alongside this feature.
@@ -275,10 +304,11 @@ set Better Auth generates into `schema.prisma`.
    app — the one place `betterAuth(...)` is constructed, so no other file
    re-configures or re-instantiates it.
 2. Attributes: holds the Better Auth instance, configured with the Prisma
-   adapter (pointed at `PrismaService`'s client, PostgreSQL provider) and the
-   email/password sign-in method enabled (the simplest login mechanism
-   sufficient for v1's single operator — no social/OAuth providers, no
-   magic-link email delivery infrastructure needed yet).
+   adapter (pointed at `PrismaService`'s client, PostgreSQL provider), `baseURL`
+   from `BETTER_AUTH_URL` (default `http://localhost:4000`), `trustedOrigins`
+   from `parseCorsOrigins()` / `CORS_ORIGIN`, and email/password sign-in
+   enabled. `sendResetPassword` currently logs `{user.email, url}` at Nest
+   logger info (no mail provider in v1). No social/OAuth providers.
 3. Methods:
    - `getSession(headers: Headers): Promise<{ operatorUserId: string } | null>`
      - Logic: delegate to Better Auth's own session-verification API, passing
@@ -287,8 +317,9 @@ set Better Auth generates into `schema.prisma`.
        no/invalid session, return `null` — no exception thrown here, the caller
        (`OperatorAuthGuard`) decides how to react.
 4. Constraints: `BETTER_AUTH_SECRET` is a required environment variable (Better
-   Auth uses it to sign session tokens) — the app MUST fail fast at boot if it
-   is unset, same discipline as any other required secret in this codebase.
+   Auth uses it to sign session tokens) — `BetterAuthService.onModuleInit`
+   throws if it is unset, same discipline as any other required secret in this
+   codebase.
 
 ### Create Controller - `AuthController`
 
@@ -299,11 +330,13 @@ set Better Auth generates into `schema.prisma`.
    - Catch-all under `/api/auth/*` → forwarded verbatim to `BetterAuthService`'s
      underlying handler; Better Auth owns the exact sub-route shapes (e.g.
      `/api/auth/sign-in/email`), not this feature.
-3. Annotations: a Nest catch-all route decorator (e.g.
-   `@All('api/auth/*splat')`) forwarding the raw request/response objects to
-   Better Auth's handler — no `ValidationPipe`, no `GlobalExceptionFilter`
-   involvement, since Better Auth manages its own request lifecycle and error
-   shapes for these routes.
+3. Annotations: `@Controller('api/auth')` plus `@All('*splat')`, forwarding
+   `req`/`res` to `toNodeHandler(this.betterAuthService.auth)` — no
+   `ValidationPipe` on this controller. `main.ts` creates Nest with
+   `{ bodyParser: false }` and applies `express.json()` only for paths that do
+   not start with `/api/auth`. `GlobalExceptionFilter` is still registered
+   globally; Better Auth writes its own JSON error bodies for auth routes when
+   it handles the response first.
 4. Constraints: this controller is unguarded (no
    `TenantAuthGuard`/`OperatorAuthGuard`) — it is the entry point _to_
    authentication, not a protected resource; `OperatorAuthGuard` is what
@@ -340,8 +373,8 @@ set Better Auth generates into `schema.prisma`.
 2. Core Methods:
    - `createTenant(dto: CreateTenantDto): Promise<TenantIssuedResponseDto>`
      - Input Validation: `dto` already validated by `ValidationPipe`
-       (name/slug/webhookUrl required, `webhookUrl` must be well-formed HTTPS —
-       custom `class-validator` decorator or
+       (name/slug/webhookUrl required; `slug` must match
+       `^[a-z0-9]+(-[a-z0-9]+)*$`; `webhookUrl` must be well-formed HTTPS via
        `@IsUrl({ protocols: ['https'], require_protocol: true })`).
      - Business Logic: generate `apiKey`/`webhookSecret` via
        `TenantCredentialService`; attempt `prisma.tenant.create(...)` with
@@ -353,6 +386,8 @@ set Better Auth generates into `schema.prisma`.
        (FR-003).
      - Return Value: `TenantIssuedResponseDto` including the raw `apiKey` and
        `webhookSecret` (only time either is ever returned in plaintext).
+       `status` is the Prisma enum (`ACTIVE` / `SUSPENDED`), not the lowercase
+       contract literals. Nest `@Post()` returns HTTP `201`.
    - `suspendTenant(tenantId: string): Promise<TenantSafeResponseDto>`
      - Business Logic:
        `prisma.tenant.update({ where: { id: tenantId }, data: { status: SUSPENDED } })`;
@@ -389,7 +424,9 @@ set Better Auth generates into `schema.prisma`.
        takes no tenant-identifying input from the caller (FR-006).
      - Business Logic: fetch tenant by `id`; this is the canonical "confirm my
        own identity resolved correctly" endpoint (User Story 2's independent
-       test).
+       test). Missing row after a resolved `tenantId` →
+       `TenantNotFoundException` (defensive; the guard already required an
+       active tenant).
      - Return Value: `TenantSafeResponseDto`.
 3. Dependency Injection: `PrismaService`.
 
@@ -427,9 +464,12 @@ set Better Auth generates into `schema.prisma`.
    individual login, not a value anyone with the env var could use.
 2. Methods:
    - `canActivate(context: ExecutionContext): Promise<boolean>`
-     - Logic: call `BetterAuthService.getSession(request.headers)`; `null`
-       (missing/invalid/expired session cookie) → throw
-       `InvalidCredentialException` (→ `401`); a resolved session → attach
+     - Logic: copy Express `request.headers` into a Fetch `Headers` instance
+       (string and string-array values only), then call
+       `BetterAuthService.getSession(headers)`; `null` (missing/invalid/expired
+       session cookie) → throw `InvalidCredentialException` (→ `401`, same
+       message as tenant credential failures:
+       `"Invalid or missing API credential"`); a resolved session → attach
        `{ operatorUserId }` to `request` (as `RequestOperatorContext`), return
        `true`.
 3. Annotations: applied via `@UseGuards(OperatorAuthGuard)` on
@@ -445,17 +485,31 @@ set Better Auth generates into `schema.prisma`.
 1. Responsibility: Give the operator an actual screen to authenticate against,
    since `OperatorAuthGuard` now depends on a real Better Auth session existing
    — without this, the guard would have no way to ever be satisfied.
-2. Scope: a minimal email/password sign-in page in `apps/web`, using Better
-   Auth's client SDK (`createAuthClient`, pointed at `apps/api`'s `/api/auth`
-   base path) to submit credentials and establish the session cookie; on
-   success, the operator is routed into whatever operator-facing views this
-   feature or a later one exposes.
-3. Constraints: this is the one deliberate, explicitly-scoped touch of
-   `apps/web` this feature makes (superseding the prior "MUST NOT modify
-   `apps/web`" constraint — see Safeguards) — limited to the login page and
-   Better Auth client wiring; no broader operator dashboard/UI is in scope here
-   beyond what's needed to authenticate. Visual design/UX treatment is an
-   implementation detail, not specified further by this canvas.
+2. Scope: email/password sign-in at TanStack route `/auth/login`
+   (`apps/web/src/modules/auth/login`), using Better Auth's client SDK
+   (`createAuthClient` in `apps/web/src/integrates/auth.ts`, pointed at
+   `{VITE_API_URL}/api/auth`) via `authClient.signIn.email`; on success,
+   navigate to `/`. Forgot-password (`/auth/forgot-password`) and reset-password
+   (`/auth/reset-password`) pages call `authClient.requestPasswordReset` /
+   `authClient.resetPassword` against the same API; reset email delivery is the
+   API log line in `BetterAuthService.sendResetPassword` until a mail provider
+   is configured. UI primitives for these forms live in `@crossfade/ui`
+   (`Alert`, `Field`, `Label`).
+3. Constraints: no operator dashboard/tenant-management UI is in scope beyond
+   authentication screens. Visual design/UX treatment is an implementation
+   detail, not specified further by this canvas.
+
+### Seed Local Operator - `apps/api/prisma/seed.ts`
+
+1. Responsibility: Idempotently upsert a local operator `User` + credential
+   `Account` so `/auth/login` can be used without a public sign-up flow.
+2. Logic: hash the password with `hashPassword` from `better-auth/crypto`;
+   create or update `providerId: credential`, `accountId: user.id`,
+   `issuer: local:credential`. Run with `pnpm prisma:seed`
+   (`tsx prisma/seed.ts`).
+3. Constraints: for local development only; never log the raw password after
+   hashing. Re-running the seed updates the stored hash and issuer so sign-in
+   stays aligned with Better Auth 1.7 account matching.
 
 ### Create Controller - `OperatorTenantsController`
 
@@ -500,7 +554,11 @@ set Better Auth generates into `schema.prisma`.
      `"Tenant slug already registered"`.
    - `TenantNotFoundException` → `404`, message `"Tenant not found"`.
    - Prisma `PrismaClientKnownRequestError` (`P2002`) not already caught by a
-     service → mapped defensively to `409`.
+     service → mapped defensively to `409` with message
+     `"Resource already exists"`.
+   - Nest `HttpException` (including `ValidationPipe` `400` and
+     `BusinessException` subclasses) → status from the exception; `message`
+     string or joined array from the exception body.
    - Anything uncaught → `500`, generic message only (no stack trace, no
      internal detail in the response body).
 3. Methods:
@@ -513,7 +571,8 @@ set Better Auth generates into `schema.prisma`.
 4. Annotations: `@Catch()`, registered globally via
    `app.useGlobalFilters(new GlobalExceptionFilter())` in `main.ts`.
 5. Response Format: `{ statusCode: number; message: string }` — matches the
-   shape already specified in `contracts/tenant-authentication.md`.
+   shape already specified in `contracts/tenant-authentication.md`. `message`
+   may be a comma-joined string when ValidationPipe returns an array.
 
 ### Create Business Exceptions
 
@@ -535,8 +594,9 @@ set Better Auth generates into `schema.prisma`.
 
 1. Annotation Standards: controllers use `@Controller(path)` + class-level
    `@UseGuards(...)`; DTOs use `class-validator` decorators (`@IsString()`,
-   `@IsUrl(...)`, `@IsNotEmpty()`); providers use standard `@Injectable()`; no
-   custom decorators introduced beyond what's listed above.
+   `@IsUrl(...)`, `@IsNotEmpty()`, `@Matches(...)` for slug); providers use
+   standard `@Injectable()`; no custom decorators introduced beyond what's
+   listed above.
 2. Dependency Injection: constructor injection only, one responsibility per
    injected service; guards inject `PrismaService`/`TenantCredentialService`
    directly (no intermediate service layer inside guards, to keep them fast and
@@ -553,7 +613,8 @@ set Better Auth generates into `schema.prisma`.
 4. Data Validation: all controller inputs validated via Nest's `ValidationPipe`
    (`whitelist: true, forbidNonWhitelisted: true`) against DTOs; no manual
    `if (!x) throw` validation in controllers or services for shape/format checks
-   — only for business-rule checks (uniqueness, status).
+   — only for business-rule checks (uniqueness, status). Slug format is
+   `@Matches(/^[a-z0-9]+(-[a-z0-9]+)*$/)`.
 5. Logging: never log `apiKey`, `webhookSecret`, or their raw values at any log
    level, in any service, guard, or exception filter — only `tenantId`/`slug`
    may appear in logs. This is the single hard rule the plan.md constraint
@@ -569,7 +630,8 @@ set Better Auth generates into `schema.prisma`.
 7. Auth Configuration: `BetterAuthService` is the single place `betterAuth(...)`
    is constructed — no controller, guard, or service outside it may import
    Better Auth's server-side configuration APIs directly; `OperatorAuthGuard`
-   only ever calls `BetterAuthService.getSession(...)`.
+   only ever calls `BetterAuthService.getSession(...)`. CORS origins for the
+   session cookie are owned by `parseCorsOrigins()` in `apps/api`.
 
 ## Safeguards
 
@@ -578,8 +640,8 @@ set Better Auth generates into `schema.prisma`.
    no route may accept a `tenantId` as a path/query/body parameter that
    overrides the guard-resolved value (FR-006).
 2. Performance Constraints: `TenantAuthGuard`'s per-request lookup MUST be a
-   single indexed query (`apiKeyHash` should be indexed, in addition to `slug`);
-   no N+1 or additional round-trips in the auth path.
+   single indexed query (`apiKeyHash` is `@unique`, in addition to `slug`); no
+   N+1 or additional round-trips in the auth path.
 3. Security Constraints: raw `apiKey`/`webhookSecret` MUST be returned in
    plaintext only in the exact create/rotate response bodies specified in
    `contracts/operator-api.md`, and MUST NOT be persisted, logged, or returned
@@ -589,11 +651,11 @@ set Better Auth generates into `schema.prisma`.
    Better Auth) MUST be `httpOnly` and `secure` in any non-local environment —
    never readable by client-side JavaScript, never transmitted over plain HTTP.
 4. Integration Constraints: this feature's touch on `apps/web` is limited
-   strictly to the operator login page and Better Auth client wiring (see
-   Operations) — it MUST NOT introduce any endpoint or behavior related to
-   self-serve tenant signup, billing/plan tiers, or multi-advisor assignment
-   (FR-013, explicit non-goals), and MUST NOT build out any operator
-   dashboard/UI beyond the login screen itself.
+   strictly to operator authentication (login, forgot-password, reset-password)
+   and Better Auth client wiring — it MUST NOT introduce any endpoint or
+   behavior related to self-serve tenant signup, billing/plan tiers, or
+   multi-advisor assignment (FR-013, explicit non-goals), and MUST NOT build out
+   any operator dashboard/UI beyond those auth screens.
 5. Business Rule Constraints: `slug` uniqueness MUST be enforced at the database
    level (unique index), not only in application code, to close the
    concurrent-registration race; suspend/reactivate MUST be idempotent (repeat
@@ -623,4 +685,7 @@ set Better Auth generates into `schema.prisma`.
 9. API Constraints: response shapes MUST exactly match
    `contracts/operator-api.md` and `contracts/tenant-authentication.md` (status
    codes, field names, once-only secret fields) — these two contract files are
-   binding, not illustrative, for this implementation.
+   binding, not illustrative, for this implementation. Current JSON `status`
+   values are Prisma enum members `ACTIVE` / `SUSPENDED`; aligning them to the
+   contract's lowercase `active` / `suspended` remains an open contract-vs-code
+   gap (do not treat the Prisma serialization as the contract).
