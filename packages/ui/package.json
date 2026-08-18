@@ -9,17 +9,12 @@
   "exports": {
     ".": "./src/styles/globals.css",
     "./globals.css": "./src/styles/globals.css",
-    "./typeset.css": "./src/styles/typeset.css",
     "./components/*": "./src/components/*.tsx",
     "./lib/theme-provider": "./src/lib/theme-provider.tsx",
     "./lib/*": "./src/lib/*.ts",
     "./hooks/*": "./src/hooks/*.ts"
   },
-  "scripts": {
-    "dev": "vite",
-    "build": "tsc -b && vite build",
-    "preview": "vite preview"
-  },
+  "scripts": {},
   "dependencies": {
     "@base-ui/react": "^1.7.0",
     "@fontsource-variable/geist": "^5.3.0",
