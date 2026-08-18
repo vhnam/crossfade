@@ -32,6 +32,36 @@ dist-ssr
 
 # AI agent worktrees
 .claude/worktrees/
-!.vscode/
-!.vscode/settings.json
-!.vscode/extensions.json
+
+# Third-party skill install trees (lockfile: skills-lock.json).
+# Reinstall with `npx skills`. Do not ignore `.claude/skills/` wholesale.
+.agents/
+
+# nextlevelbuilder/ui-ux-pro-max-skill
+.claude/skills/ui-ux-pro-max/
+
+# kadajett/agent-nestjs-skills
+.claude/skills/nestjs-best-practices/
+
+# mattpocock/skills
+.claude/skills/ask-matt/
+.claude/skills/code-review/
+.claude/skills/codebase-design/
+.claude/skills/diagnosing-bugs/
+.claude/skills/domain-modeling/
+.claude/skills/grill-me/
+.claude/skills/grill-with-docs/
+.claude/skills/grilling/
+.claude/skills/handoff/
+.claude/skills/implement/
+.claude/skills/improve-codebase-architecture/
+.claude/skills/prototype/
+.claude/skills/research/
+.claude/skills/resolving-merge-conflicts/
+.claude/skills/setup-matt-pocock-skills/
+.claude/skills/tdd/
+.claude/skills/teach/
+.claude/skills/to-questionnaire/
+.claude/skills/wait-what/
+.claude/skills/wizard/
+.claude/skills/writing-for-agents/
