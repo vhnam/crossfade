@@ -17,6 +17,11 @@ vp run changeset:version   # consume changesets, bump package.json, write CHANGE
 `changeset version` is a release step. Conventional Commits describe git
 history; they do not bump versions by themselves.
 
+`format` is `false` in `config.json` because Changesets v3 auto-detects
+`.oxfmtrc.json` and runs `pnpm exec oxfmt`. In this repo that binary is a Vite+
+IDE wrapper and exits with an error; use `vp fmt` (or the pre-commit
+`vp check --fix`) instead.
+
 ## When to add a changeset
 
 Add a `.changeset/*.md` file when a package’s API or shipped behavior changes.
