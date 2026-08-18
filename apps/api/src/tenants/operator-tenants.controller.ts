@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, HttpStatus, Param, Post, UseGuards } from '@nestjs/common';
 
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { RotateKeyResponseDto } from './dto/rotate-key-response.dto';
@@ -13,21 +13,25 @@ export class OperatorTenantsController {
   constructor(private readonly operatorTenantsService: OperatorTenantsService) {}
 
   @Post()
+  @HttpCode(HttpStatus.CREATED)
   createTenant(@Body() dto: CreateTenantDto): Promise<TenantIssuedResponseDto> {
     return this.operatorTenantsService.createTenant(dto);
   }
 
   @Post(':id/suspend')
+  @HttpCode(HttpStatus.OK)
   suspendTenant(@Param('id') id: string): Promise<TenantSafeResponseDto> {
     return this.operatorTenantsService.suspendTenant(id);
   }
 
   @Post(':id/reactivate')
+  @HttpCode(HttpStatus.OK)
   reactivateTenant(@Param('id') id: string): Promise<TenantSafeResponseDto> {
     return this.operatorTenantsService.reactivateTenant(id);
   }
 
   @Post(':id/rotate-key')
+  @HttpCode(HttpStatus.OK)
   rotateKey(@Param('id') id: string): Promise<RotateKeyResponseDto> {
     return this.operatorTenantsService.rotateKey(id);
   }
