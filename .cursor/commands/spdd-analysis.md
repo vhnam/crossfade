@@ -298,15 +298,15 @@ Input can be provided in two ways:
 
 7. **Save the enriched context document**
 
-   a. **Derive file name**: `{JIRA}-{TIMESTAMP}-[Analysis]-{description}.md`
-   - **JIRA**: Extract from business context if mentioned, otherwise use
-     `GGQPA-XXX`
+   a. **Derive file name**: `{TIMESTAMP}-[Analysis]-{SEQ}-{description}.md`
    - **TIMESTAMP**: `YYYYMMDDHHmm` (current time)
+   - **SEQ**: Next 3-digit sequence from existing files in `docs/spdd/analysis/`
+     (start at `001` if the directory is empty)
    - **description**: Derive from business context — kebab-case, < 10 words
 
    Examples:
-   - `GGQPA-XXX-202603131530-[Analysis]-token-usage-billing.md`
-   - `GGQPA-169-202603131530-[Analysis]-monthly-report-export.md`
+   - `202608181400-[Analysis]-001-tenant-onboarding-isolation.md`
+   - `202608181530-[Analysis]-002-monthly-report-export.md`
 
    b. **Create directory and write file**:
    - Ensure directory `docs/spdd/analysis/` exists under the project root
@@ -374,7 +374,6 @@ containing:
 - Always read ALL `@` referenced files completely
 - Always create `docs/spdd/analysis/` directory if it does not exist
 - File name MUST follow the naming convention defined above
-- Use `GGQPA-XXX` if JIRA ticket number cannot be extracted from context
 - Acceptance Criteria coverage MUST assess every AC from the requirement
 - Risk & Gap Analysis MUST surface any ambiguities — do NOT silently assume
 
@@ -412,7 +411,7 @@ business requirements to implementation-ready structured prompts:
 │  │   + Risk & Gap Analysis (ambiguities, edge cases, risks)        │    │
 │  │   = Enriched Context (Business + Strategic + Risks)             │    │
 │  │                                                                 │    │
-│  │ Output: docs/spdd/analysis/GGQPA-XXX-*-[Analysis]-*.md              │    │
+│  │ Output: docs/spdd/analysis/{TIMESTAMP}-[Analysis]-{SEQ}-*.md        │    │
 │  └────────────────────────────────────────────────────────────────┘    │
 │                              │                                          │
 │                              ▼                                          │
@@ -420,7 +419,7 @@ business requirements to implementation-ready structured prompts:
 │  ┌────────────────────────────────────────────────────────────────┐    │
 │  │ Enriched Context → REASONS Canvas Structured Prompt             │    │
 │  │                                                                 │    │
-│  │ Output: docs/spdd/prompt/GGQPA-XXX-*.md (REASONS Canvas)           │    │
+│  │ Output: docs/spdd/prompt/{TIMESTAMP}-[{ACTION}]-{SEQ}-*.md          │    │
 │  └────────────────────────────────────────────────────────────────┘    │
 │                              │                                          │
 │                              ▼                                          │

@@ -13,7 +13,7 @@ norms defined in the prompt.
 
 **Input**: The argument after `/spdd-generate` is the path to the structured
 prompt file (e.g.,
-`@docs/spdd/prompt/GGQPA-XXX-202602271430-[Feat]-api-create-agent-endpoint.md`).
+`@docs/spdd/prompt/202608181415-[Feat]-001-api-tenant-onboarding-isolation.md`).
 
 **Steps**
 
@@ -227,7 +227,7 @@ This command is the third phase of the SPDD workflow:
 │  ┌────────────────────────────────────────────────────────────────┐    │
 │  │ Enriched Context → REASONS Canvas → Structured Prompt          │    │
 │  │                                                                 │    │
-│  │ Output: docs/spdd/prompt/GGQPA-XXX-*.md (REASONS Canvas)           │    │
+│  │ Output: docs/spdd/prompt/{TIMESTAMP}-[{ACTION}]-{SEQ}-*.md          │    │
 │  └────────────────────────────────────────────────────────────────┘    │
 │                              │                                          │
 │                              ▼                                          │

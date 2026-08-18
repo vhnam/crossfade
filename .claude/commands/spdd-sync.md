@@ -13,7 +13,7 @@ prompt remains the accurate source of truth for the system design.
 
 **Input**: The argument after `/spdd-sync` is the path to the structured prompt
 file (e.g.,
-`@docs/spdd/prompt/GGQPA-XXX-202602271430-[Feat]-api-create-agent-endpoint.md`).
+`@docs/spdd/prompt/202608181415-[Feat]-001-api-tenant-onboarding-isolation.md`).
 
 **Steps**
 
