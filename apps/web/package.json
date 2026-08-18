@@ -1,6 +1,6 @@
 {
   "name": "@crossfade/web",
-  "version": "0.0.0",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "imports": {
@@ -13,10 +13,15 @@
   },
   "dependencies": {
     "@crossfade/ui": "workspace:*",
+    "@formisch/react": "catalog:",
+    "@t3-oss/env-core": "catalog:",
     "@tanstack/react-query": "catalog:",
     "@tanstack/react-router": "catalog:",
+    "better-auth": "^1.2.2",
+    "lucide-react": "catalog:",
     "react": "catalog:",
-    "react-dom": "catalog:"
+    "react-dom": "catalog:",
+    "valibot": "catalog:"
   },
   "devDependencies": {
     "@babel/core": "catalog:",

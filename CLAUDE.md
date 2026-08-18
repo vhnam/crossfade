@@ -24,8 +24,8 @@ Spec Kit stops after `/speckit-plan` unless the user explicitly asks for
 
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **crossfade** (877 symbols, 1097
-relationships, 14 execution flows). Use the GitNexus MCP tools to understand
+This project is indexed by GitNexus as **crossfade** (1202 symbols, 1899
+relationships, 34 execution flows). Use the GitNexus MCP tools to understand
 code, assess impact, and navigate safely.
 
 > Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it
