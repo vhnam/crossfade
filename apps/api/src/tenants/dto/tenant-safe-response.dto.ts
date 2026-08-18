@@ -1,10 +1,10 @@
-import type { TenantStatus } from '@prisma/client';
+import type { TenantPublicStatus } from '../tenant-status';
 
 export class TenantSafeResponseDto {
   id!: string;
   slug!: string;
   name!: string;
-  status!: TenantStatus;
+  status!: TenantPublicStatus;
   webhookUrl!: string;
   createdAt!: Date;
   updatedAt!: Date;

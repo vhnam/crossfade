@@ -1,7 +1,8 @@
 import { randomUUID } from 'node:crypto';
 
-import { PrismaClient } from '@prisma/client';
 import { hashPassword } from 'better-auth/crypto';
+
+import { PrismaClient } from '../src/generated/prisma';
 
 const prisma = new PrismaClient();
 

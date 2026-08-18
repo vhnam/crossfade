@@ -1,9 +1,9 @@
 import { CanActivate, ExecutionContext, Injectable } from '@nestjs/common';
-import { TenantStatus } from '@prisma/client';
 import type { Request } from 'express';
 
 import { InvalidCredentialException, TenantSuspendedException } from '../../common/exceptions/business.exception';
 import type { RequestTenantContext } from '../../common/types/request-context';
+import { TenantStatus } from '../../prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { TenantCredentialService } from '../tenant-credential.service';
 

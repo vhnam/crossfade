@@ -1,6 +1,7 @@
 import { ArgumentsHost, Catch, ExceptionFilter, HttpException, HttpStatus, Logger } from '@nestjs/common';
-import { Prisma } from '@prisma/client';
 import type { Response } from 'express';
+
+import { Prisma } from '../../prisma/client';
 
 interface ErrorResponse {
   statusCode: number;

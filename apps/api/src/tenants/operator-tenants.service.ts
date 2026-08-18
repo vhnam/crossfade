@@ -1,13 +1,14 @@
 import { Injectable } from '@nestjs/common';
-import { Prisma, TenantStatus } from '@prisma/client';
 
 import { DuplicateTenantSlugException, TenantNotFoundException } from '../common/exceptions/business.exception';
+import { TenantStatus } from '../prisma/client';
 import { PrismaService } from '../prisma/prisma.service';
 import { CreateTenantDto } from './dto/create-tenant.dto';
 import { RotateKeyResponseDto } from './dto/rotate-key-response.dto';
 import { TenantIssuedResponseDto } from './dto/tenant-issued-response.dto';
 import { TenantSafeResponseDto } from './dto/tenant-safe-response.dto';
 import { TenantCredentialService } from './tenant-credential.service';
+import { toTenantPublicStatus } from './tenant-status';
 
 @Injectable()
 export class OperatorTenantsService {
@@ -36,14 +37,14 @@ export class OperatorTenantsService {
         id: tenant.id,
         slug: tenant.slug,
         name: tenant.name,
-        status: tenant.status,
+        status: toTenantPublicStatus(tenant.status),
         apiKey,
         webhookUrl: tenant.webhookUrl,
         webhookSecret: tenant.webhookSecret,
         createdAt: tenant.createdAt,
       };
-    } catch (error) {
-      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+    } catch (error: unknown) {
+      if (isSlugUniqueViolation(error)) {
         throw new DuplicateTenantSlugException();
       }
       throw error;
@@ -107,10 +108,25 @@ export class OperatorTenantsService {
       id: tenant.id,
       slug: tenant.slug,
       name: tenant.name,
-      status: tenant.status,
+      status: toTenantPublicStatus(tenant.status),
       webhookUrl: tenant.webhookUrl,
       createdAt: tenant.createdAt,
       updatedAt: tenant.updatedAt,
     };
   }
+}
+
+function isSlugUniqueViolation(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('code' in error)) {
+    return false;
+  }
+
+  const { code, meta } = error as { code: unknown; meta?: { target?: unknown } };
+  if (code !== 'P2002') {
+    return false;
+  }
+
+  const target = meta?.target;
+  const fields = Array.isArray(target) ? target : typeof target === 'string' ? [target] : [];
+  return fields.includes('slug');
 }
